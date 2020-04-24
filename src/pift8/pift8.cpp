@@ -32,6 +32,11 @@ Example : sudo pift8 -m \"CQ CA0ALL JN06\" -f 14.074e6\n\
 PROGRAM_VERSION);
 }
 
+void setupGpio3(void);
+
+void txOn(void);
+
+void txOff(void);
 
 static void
 terminate(int num)
@@ -168,6 +173,8 @@ int main(int argc, char **argv) {
         sigaction(i, &sa, NULL);
     }
 
+    setupGpio3();
+
     
     int Upsample=100;
     int FifoSize=ft8::NN;
@@ -197,12 +204,13 @@ int main(int argc, char **argv) {
     fprintf(stderr,"Wait next slot\n");
     if(slot<2)
         wait_every(30,slot*15);
-    else
+    else if (slot == 2)
         wait_every(15,0);
     do
     {
         if(!running) exit(0);
         fprintf(stderr,"Tx!\n");
+	txOn();
         fsk.SetSymbols(Symbols, (ft8::NN));
         fsk.stop();
         fprintf(stderr,"End of Tx\n");
@@ -215,4 +223,6 @@ int main(int argc, char **argv) {
               wait_every(15,0);
         }    
     }  while(repeat&&running);  
+//	txOff();
+        fprintf(stderr,"Exiting\n");
 }

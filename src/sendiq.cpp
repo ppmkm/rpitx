@@ -4,6 +4,7 @@
 #include <cstring>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/select.h>
 
 bool running=true;
 
@@ -153,8 +154,18 @@ int main(int argc, char* argv[])
 		exit(0);
 	}
 
-	#define IQBURST 4000
+    #define IQBURST 4000
+
+	int iqfd = fileno(iqfile);
+
+	long usTimeout = (1000000L/SampleRate)*IQBURST*2; // us to fill IQBURST*2 at Samplerate
+
+	struct timeval timeout;
+	fd_set rfds;
+
+
 	
+
 	int SR=48000;
 	int FifoSize=IQBURST*4;
 	iqdmasync iqtest(SetFrequency,SampleRate,14,FifoSize,MODE_IQ);
@@ -163,34 +174,83 @@ int main(int argc, char* argv[])
 	//iqtest.SetPLLMasterLoop(5,6,0);
 	
 	std::complex<float> CIQBuffer[IQBURST];	
+
+	int selectDone = 0;
+	printf ("starting TX with select timeout us %ld: \n", usTimeout);
+	unsigned underrunCount = 0;
+	unsigned selectcount = 0L;
+
 	while(running)
 	{
 		
+			timeout.tv_sec = 0L;
+			timeout.tv_usec = usTimeout;
+			FD_ZERO(&rfds);
+			FD_SET(iqfd,&rfds);
 			int CplxSampleNumber=0;
 			switch(InputType)
 			{
 				case typeiq_i16:
 				{
 					static short IQBuffer[IQBURST*2];
-					int nbread=fread(IQBuffer,sizeof(short),IQBURST*2,iqfile);
-					//if(nbread==0) continue;
-					if(nbread>0)
+					int selval = select(iqfd+1,&rfds,NULL,NULL,&timeout);
+					if (!selectDone)
 					{
-						for(int i=0;i<nbread/2;i++)
+						printf("select Done %d\n", selval);
+						selectDone = 1;
+					}
+					else
+					{
+						printf("S");
+						fflush(stdout);
+					}
+					if (0 < selval)
+					{
+						int nbread=fread(IQBuffer,sizeof(short),IQBURST*2,iqfile);
+						//if(nbread==0) continue;
+						if(nbread>0)
 						{
-							if(i%Decimation==0)
-							{		
-								CIQBuffer[CplxSampleNumber++]=std::complex<float>(IQBuffer[i*2]/32768.0,IQBuffer[i*2+1]/32768.0); 
+//						printf("R_%d\n",IQBuffer[0]);
+						fflush(stdout);
+
+							for(int i=0;i<nbread/2;i++)
+							{
+								if(i%Decimation==0)
+								{
+									CIQBuffer[CplxSampleNumber++]=std::complex<float>(IQBuffer[i*2]/32768.0,IQBuffer[i*2+1]/32768.0);
+								}
 							}
 						}
+						else
+						{
+							printf("End of file\n");
+//							if(loop_mode_flag)
+//							fseek ( iqfile , 0 , SEEK_SET );
+//							else
+								running=false;
+						}
 					}
-					else 
+					else if ((0 == selval) && feof(iqfile))
 					{
 						printf("End of file\n");
 						if(loop_mode_flag)
 						fseek ( iqfile , 0 , SEEK_SET );
 						else
 							running=false;
+					}
+					else if (0 == selval)
+					{
+						if ((underrunCount++%10) == 0) 
+						{
+						       	printf("U");
+							fflush(stdout);
+						}
+						continue;
+					}
+					else
+					{
+						perror("Error in select: ");
+						running = false;
 					}
 					
 				}
@@ -225,27 +285,64 @@ int main(int argc, char* argv[])
 				case typeiq_float:
 				{
 					static float IQBuffer[IQBURST*2];
-					int nbread=fread(IQBuffer,sizeof(float),IQBURST*2,iqfile);
-					//if(nbread==0) continue;
-					if(nbread>0)
+					int selval = select(iqfd+1,&rfds,NULL,NULL,&timeout);
+					if (!selectDone)
 					{
-						for(int i=0;i<nbread/2;i++)
+						printf("select Done %d\n", selval);
+						selectDone = 1;
+					}
+					else
+					{
+				//		printf("S");
+				//		fflush(stdout);
+					}
+					if (0 < selval)
+					{
+					
+						int nbread=fread(IQBuffer,sizeof(float),IQBURST*2,iqfile);
+						//if(nbread==0) continue;
+						if(nbread>0)
 						{
-							if(i%Decimation==0)
-							{	
-								CIQBuffer[CplxSampleNumber++]=std::complex<float>(IQBuffer[i*2],IQBuffer[i*2+1]);
-										
-							}		 
-							//printf("%f %f\n",(IQBuffer[i*2]-127.5)/128.0,(IQBuffer[i*2+1]-127.5)/128.0);
+							for(int i=0;i<nbread/2;i++)
+							{
+								if(i%Decimation==0)
+								{	
+									CIQBuffer[CplxSampleNumber++]=std::complex<float>(IQBuffer[i*2],IQBuffer[i*2+1]);
+											
+								}		 
+								//printf("%f %f\n",(IQBuffer[i*2]-127.5)/128.0,(IQBuffer[i*2+1]-127.5)/128.0);
+							}
+						}
+						else 
+						{
+							printf("End of file\n");
+							if(loop_mode_flag)
+							fseek ( iqfile , 0 , SEEK_SET );
+							else
+								running=false;
 						}
 					}
-					else 
+					else if ((0 == selval) && feof(iqfile))
 					{
 						printf("End of file\n");
 						if(loop_mode_flag)
 						fseek ( iqfile , 0 , SEEK_SET );
 						else
 							running=false;
+					}
+					else if (0 == selval)
+					{
+						if ((underrunCount++%10) == 0) 
+						{
+						       	printf("U");
+							fflush(stdout);
+						}
+						continue;
+					}
+					else
+					{
+						perror("Error in select: ");
+						running = false;
 					}
 				}
 				break;	
