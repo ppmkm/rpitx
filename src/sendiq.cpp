@@ -56,6 +56,8 @@ static iqdmasync* giqtest = NULL;
 #define SBUFSIZE 1500
 
 static char sockbuf[SBUFSIZE];
+static float SampleRate=48000;
+static float SetFrequency=434e6;
 
 
 void *ctrl_thread_function(void * arg)
@@ -82,7 +84,14 @@ void *ctrl_thread_function(void * arg)
 			double freq = strtod(sockbuf+2,NULL);
 			if (!errno) {
 				printf("tuning to %llu\n", (uint64_t)freq);
-                giqtest->setFrequency((uint64_t)freq);
+--                giqtest->setFrequency((uint64_t)freq);
+				SetFrequency = freq;
+                giqtest->clkgpio::disableclk(4);
+                giqtest->clkgpio::SetAdvancedPllMode(true);
+                giqtest->clkgpio::SetCenterFrequency(freq,SampleRate);
+                giqtest->clkgpio::SetFrequency(0);
+                giqtest->clkgpio::enableclk(4);
+
 			} else {
 				printf("error processing: %s\n", sockbuf);
 			}
@@ -105,8 +114,7 @@ int main(int argc, char* argv[])
 {
 	int a;
 	int anyargs = 1;
-	float SetFrequency=434e6;
-	float SampleRate=48000;
+
 	bool loop_mode_flag=false;
 	char* FileName=NULL;
 	int Harmonic=1;
