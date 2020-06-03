@@ -50,7 +50,6 @@ terminate(int num)
 }
 
 
-static iqdmasync* giqtest = NULL;
 
 
 #define SBUFSIZE 1500
@@ -58,6 +57,7 @@ static iqdmasync* giqtest = NULL;
 static char sockbuf[SBUFSIZE];
 static float SampleRate=48000;
 static float SetFrequency=434e6;
+static float NewSetFrequency=SetFrequency;
 
 
 void *ctrl_thread_function(void * arg)
@@ -83,15 +83,8 @@ void *ctrl_thread_function(void * arg)
 			errno = 0;
 			double freq = strtod(sockbuf+2,NULL);
 			if (!errno) {
-				printf("tuning to %llu\n", (uint64_t)freq);
---                giqtest->setFrequency((uint64_t)freq);
-				SetFrequency = freq;
-                giqtest->clkgpio::disableclk(4);
-                giqtest->clkgpio::SetAdvancedPllMode(true);
-                giqtest->clkgpio::SetCenterFrequency(freq,SampleRate);
-                giqtest->clkgpio::SetFrequency(0);
-                giqtest->clkgpio::enableclk(4);
-
+				NewSetFrequency = freq;
+				printf("tuning from %f to %f\n", SetFrequency, NewSetFrequency);
 			} else {
 				printf("error processing: %s\n", sockbuf);
 			}
@@ -139,6 +132,7 @@ int main(int argc, char* argv[])
 			break;
 		case 'f': // Frequency
 			SetFrequency = atof(optarg);
+			NewSetFrequency = SetFrequency;
 			break;
 		case 's': // SampleRate (Only needeed in IQ mode)
 			SampleRate = atoi(optarg);
@@ -235,9 +229,8 @@ int main(int argc, char* argv[])
 	int SR=48000;
 	int FifoSize=IQBURST*4;
 	iqdmasync iqtest(SetFrequency,SampleRate,14,FifoSize,MODE_IQ);
-	giqtest = &iqtest;
 	iqtest.SetPLLMasterLoop(3,4,0);
-	//iqtest.print_clock_tree();
+	iqtest.print_clock_tree();
 	//iqtest.SetPLLMasterLoop(5,6,0);
 	
 	std::complex<float> CIQBuffer[IQBURST];	
@@ -257,6 +250,16 @@ int main(int argc, char* argv[])
 		
 			timeout.tv_sec = 0L;
 			timeout.tv_usec = usTimeout;
+	        if (NewSetFrequency != SetFrequency){
+				printf("really tuning to %llu\n", (uint64_t)SetFrequency);
+				SetFrequency = NewSetFrequency;
+				iqtest.stop();
+				printf("stopped dma\n");
+				iqtest.clkgpio::disableclk(4);
+				iqtest.setFrequency(SetFrequency);
+				iqtest.clkgpio::print_clock_tree();
+				printf("done really tuning to %llu\n", (uint64_t)SetFrequency);
+	        }
 			FD_ZERO(&rfds);
 			FD_SET(iqfd,&rfds);
 			int CplxSampleNumber=0;
@@ -447,6 +450,7 @@ int main(int argc, char* argv[])
 				break;	
 			
 		}
+
 		iqtest.SetIQSamples(CIQBuffer,CplxSampleNumber,Harmonic);
 	}
 	printf("stopping iqtest\n");
