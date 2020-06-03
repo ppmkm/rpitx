@@ -5,10 +5,17 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/select.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 bool running=true;
 
 #define PROGRAM_VERSION "0.1"
+#define CTRL_SOCKET  "/var/run/sendiq"
+
+static pthread_t control_thread;
+static bool terminating = false;
 
 void SimpleTestFileIQ(uint64_t Freq)
 {
@@ -37,18 +44,70 @@ static void
 terminate(int num)
 {
     running=false;
+    terminating = true;
 	fprintf(stderr,"Caught signal - Terminating %x\n",num);
    
 }
 
+
+
+
+#define SBUFSIZE 1500
+
+static char sockbuf[SBUFSIZE];
+static float SampleRate=48000;
+static float SetFrequency=434e6;
+static float NewSetFrequency=SetFrequency;
+
+
+void *ctrl_thread_function(void * arg)
+{
+	int sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (sockfd < 0)
+	  perror("ERROR opening socket");
+	struct sockaddr_un server;
+    server.sun_family = AF_UNIX;
+	strcpy(server.sun_path, CTRL_SOCKET);
+    if (bind(sockfd, (struct sockaddr *) &server,
+                 sizeof(struct sockaddr_un)) == -1)
+             perror("bind");
+	printf("bound ctrl socket\n");
+	while (!terminating){
+		ssize_t received = recv(sockfd,sockbuf,SBUFSIZE-1,0);
+		sockbuf[received] = '\0';
+		if (!strncmp("stop",sockbuf,4)){
+		  terminating = true;
+		  running = false;
+		}
+		if (!strncmp("F ",sockbuf,2) && received > 5){
+			errno = 0;
+			double freq = strtod(sockbuf+2,NULL);
+			if (!errno) {
+				NewSetFrequency = freq;
+				printf("tuning from %f to %f\n", SetFrequency, NewSetFrequency);
+			} else {
+				printf("error processing: %s\n", sockbuf);
+			}
+
+		}
+
+	}
+	close(sockfd);
+	printf("ctrl thread ends\n");
+    return NULL;
+}
+
+
+
 #define MAX_SAMPLERATE 200000
+
+
 
 int main(int argc, char* argv[])
 {
 	int a;
 	int anyargs = 1;
-	float SetFrequency=434e6;
-	float SampleRate=48000;
+
 	bool loop_mode_flag=false;
 	char* FileName=NULL;
 	int Harmonic=1;
@@ -73,6 +132,7 @@ int main(int argc, char* argv[])
 			break;
 		case 'f': // Frequency
 			SetFrequency = atof(optarg);
+			NewSetFrequency = SetFrequency;
 			break;
 		case 's': // SampleRate (Only needeed in IQ mode)
 			SampleRate = atoi(optarg);
@@ -170,7 +230,7 @@ int main(int argc, char* argv[])
 	int FifoSize=IQBURST*4;
 	iqdmasync iqtest(SetFrequency,SampleRate,14,FifoSize,MODE_IQ);
 	iqtest.SetPLLMasterLoop(3,4,0);
-	//iqtest.print_clock_tree();
+	iqtest.print_clock_tree();
 	//iqtest.SetPLLMasterLoop(5,6,0);
 	
 	std::complex<float> CIQBuffer[IQBURST];	
@@ -180,11 +240,26 @@ int main(int argc, char* argv[])
 	unsigned underrunCount = 0;
 	unsigned selectcount = 0L;
 
+	if (pthread_create( &control_thread, NULL, ctrl_thread_function, (void*) NULL)){
+		perror ("error starting control thread");
+	} else
+		printf ("started control thread\n");
+
 	while(running)
 	{
 		
 			timeout.tv_sec = 0L;
 			timeout.tv_usec = usTimeout;
+	        if (NewSetFrequency != SetFrequency){
+				printf("really tuning to %llu\n", (uint64_t)SetFrequency);
+				SetFrequency = NewSetFrequency;
+				iqtest.stop();
+				printf("stopped dma\n");
+				iqtest.clkgpio::disableclk(4);
+				iqtest.setFrequency(SetFrequency);
+				iqtest.clkgpio::print_clock_tree();
+				printf("done really tuning to %llu\n", (uint64_t)SetFrequency);
+	        }
 			FD_ZERO(&rfds);
 			FD_SET(iqfd,&rfds);
 			int CplxSampleNumber=0;
@@ -240,12 +315,12 @@ int main(int argc, char* argv[])
 					}
 					else if (0 == selval)
 					{
-						if ((underrunCount++%10) == 0) 
-						{
+//						if ((underrunCount++%10) == 0)
+//						{
 						       	printf("U");
 							fflush(stdout);
-						}
-						continue;
+//						}
+//						continue;
 					}
 					else
 					{
@@ -375,10 +450,18 @@ int main(int argc, char* argv[])
 				break;	
 			
 		}
+
 		iqtest.SetIQSamples(CIQBuffer,CplxSampleNumber,Harmonic);
 	}
-
+	printf("stopping iqtest\n");
 	iqtest.stop();
-	
-}	
+	unlink(CTRL_SOCKET);
+	fclose(iqfile);
+	if (pthread_cancel(control_thread)){
+		perror ("error stopping control thread");
+	} else
+		printf ("canceled control thread\n");
+	printf("main ends\n");
+}
+
 
