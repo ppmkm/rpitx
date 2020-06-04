@@ -124,6 +124,7 @@ int main(int argc, char* argv[])
 	enum {typeiq_i16,typeiq_u8,typeiq_float,typeiq_double};
 	int InputType=typeiq_i16;
 	int Decimation=1;
+	dbg_setlevel(1);
 	while(1)
 	{
 		a = getopt(argc, argv, "i:f:s:h:p:lt:");
@@ -243,7 +244,8 @@ int main(int argc, char* argv[])
 	int FifoSize=IQBURST*4;
 	iqdmasync iqtest(SetFrequency,SampleRate,14,FifoSize,MODE_IQ);
 	iqtest.SetPLLMasterLoop(3,4,0);
-	iqtest.print_clock_tree();
+	iqtest.clkgpio::SetppmFromNTP();
+//	iqtest.print_clock_tree();
 	//iqtest.SetPLLMasterLoop(5,6,0);
 	
 	std::complex<float> CIQBuffer[IQBURST];	
@@ -272,7 +274,8 @@ int main(int argc, char* argv[])
 				printf("stopped dma\n");
 				iqtest.clkgpio::disableclk(4);
 				iqtest.setFrequency(SetFrequency);
-				iqtest.clkgpio::print_clock_tree();
+//				iqtest.clkgpio::print_clock_tree();
+				iqtest.clkgpio::SetppmFromNTP();
 				printf("done really tuning to %llu\n", (uint64_t)SetFrequency);
 	        }
 			FD_ZERO(&rfds);
