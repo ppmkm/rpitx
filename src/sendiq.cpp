@@ -7,6 +7,7 @@
 #include <sys/select.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <sys/un.h>
 
 bool running=true;
@@ -16,6 +17,7 @@ bool running=true;
 
 static pthread_t control_thread;
 static bool terminating = false;
+static int udpPort = -1;
 
 void SimpleTestFileIQ(uint64_t Freq)
 {
@@ -33,6 +35,7 @@ Usage:\nsendiq [-i File Input][-s Samplerate][-l] [-f Frequency] [-h Harmonic nu
 -f float      central frequency Hz(50 kHz to 1500 MHz),\n\
 -l            loop mode for file input\n\
 -h            Use harmonic number n\n\
+-p uint       port to use for UDP control\n\
 -t            IQ type (i16 default) {i16,u8,float,double}\n\
 -?            help (this help).\n\
 \n",\
@@ -62,15 +65,20 @@ static float NewSetFrequency=SetFrequency;
 
 void *ctrl_thread_function(void * arg)
 {
-	int sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	int sockfd = socket(PF_INET, SOCK_DGRAM, 0);
 	if (sockfd < 0)
 	  perror("ERROR opening socket");
-	struct sockaddr_un server;
-    server.sun_family = AF_UNIX;
-	strcpy(server.sun_path, CTRL_SOCKET);
+//	struct sockaddr_un server;
+	struct sockaddr_in server;
+    server.sin_family = AF_INET;
+    server.sin_port = htons(udpPort);
+    server.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(sockfd, (struct sockaddr *) &server,
-                 sizeof(struct sockaddr_un)) == -1)
+                 sizeof(struct sockaddr_in)) == -1)
+    {
              perror("bind");
+             return NULL;
+    }
 	printf("bound ctrl socket\n");
 	while (!terminating){
 		ssize_t received = recv(sockfd,sockbuf,SBUFSIZE-1,0);
@@ -116,7 +124,7 @@ int main(int argc, char* argv[])
 	int Decimation=1;
 	while(1)
 	{
-		a = getopt(argc, argv, "i:f:s:h:lt:");
+		a = getopt(argc, argv, "i:f:s:h:p:lt:");
 	
 		if(a == -1) 
 		{
@@ -161,6 +169,9 @@ int main(int argc, char* argv[])
 			break;
 		case 'h': // help
 			Harmonic=atoi(optarg);
+			break;
+		case 'p': // port
+			udpPort=atoi(optarg);
 			break;
 		case 'l': // loop mode
 			loop_mode_flag = true;
@@ -240,10 +251,12 @@ int main(int argc, char* argv[])
 	unsigned underrunCount = 0;
 	unsigned selectcount = 0L;
 
-	if (pthread_create( &control_thread, NULL, ctrl_thread_function, (void*) NULL)){
-		perror ("error starting control thread");
-	} else
-		printf ("started control thread\n");
+	if (udpPort > 0 ) {
+		if (pthread_create( &control_thread, NULL, ctrl_thread_function, (void*) NULL)){
+			perror ("error starting control thread");
+		} else
+			printf ("started control thread on port: %d\n", udpPort);
+	}
 
 	while(running)
 	{
