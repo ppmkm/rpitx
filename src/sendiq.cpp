@@ -77,6 +77,8 @@ void *ctrl_thread_function(void * arg)
                  sizeof(struct sockaddr_in)) == -1)
     {
              perror("bind");
+             terminating = true;
+             running = false;
              return NULL;
     }
 	printf("bound ctrl socket\n");
